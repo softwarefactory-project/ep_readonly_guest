@@ -4,31 +4,35 @@ const $ = require('cheerio');
 const assert = require('assert').strict;
 const authorManager = require('ep_etherpad-lite/node/db/AuthorManager');
 const log4js = require('ep_etherpad-lite/node_modules/log4js');
+const path = require('path');
 const plugins = require('ep_etherpad-lite/static/js/pluginfw/plugin_defs');
 
 const pluginName = 'ep_readonly_guest';
 const logger = log4js.getLogger(pluginName);
 let user;
+let settings;
 
 const endpoint = (ep) => `/${encodeURIComponent(pluginName)}/${ep}`;
+const endpointURL = (ep) => URL(path.join(encodeURIComponent(pluginName), ep), settings.base_url || '').toString();
+const redirectURL = (url) => URL(url, settings.base_url || '').toString();
 
 const makeLogInOutButton = (req) => {
-  const {user: {username} = {}} = req.session;
+  const { user: { username } = {} } = req.session;
   const isGuest = username === user.username;
   const ep = isGuest ? 'login' : 'logout';
-  const buttonUri = `${endpoint(ep)}?redirect_uri=${encodeURIComponent(req.url)}`;
+  const buttonUri = `${endpointURL(ep)}?redirect_uri=${encodeURIComponent(redirectURL(req.url))}`;
   const buttonText = isGuest ? 'Log In' : 'Log Out';
   return $('<div>')
-      .addClass('btn-container')
-      .append($('<a>')
-          .attr('href', buttonUri)
-          .addClass('btn')
-          .addClass('btn-primary')
-          .attr('data-l10n-id', `${pluginName}_${ep}`)
-          .text(buttonText));
+    .addClass('btn-container')
+    .append($('<a>')
+      .attr('href', buttonUri)
+      .addClass('btn')
+      .addClass('btn-primary')
+      .attr('data-l10n-id', `${pluginName}_${ep}`)
+      .text(buttonText));
 };
 
-exports.authenticate = (hookName, {req}, cb) => {
+exports.authenticate = (hookName, { req }, cb) => {
   logger.debug(`${hookName} ${req.url}`);
   // If the user is visiting the 'forceauth' endpoint then fall through to the next authenticate
   // plugin (or to the built-in basic auth). This is what forces the real authentication.
@@ -39,11 +43,11 @@ exports.authenticate = (hookName, {req}, cb) => {
   return cb([true]);
 };
 
-exports.clientVars = async (hookName, {socket: {client: {request: req}}}) => {
+exports.clientVars = async (hookName, { socket: { client: { request: req } } }) => {
   logger.debug(hookName);
-  const {session: {user: {username} = {}} = {}} = req;
+  const { session: { user: { username } = {} } = {} } = req;
   const vars = {};
-  vars[pluginName] = {isGuest: username === user.username};
+  vars[pluginName] = { isGuest: username === user.username };
   return vars;
 };
 
@@ -53,9 +57,9 @@ exports.eejsBlock_permissionDenied = (hookName, context) => {
   // https://github.com/cheeriojs/cheerio/issues/1031
   const content = $('<div>').html(context.content);
   content.find('#permissionDenied').prepend(
-      makeLogInOutButton(context.renderContext.req)
-          .css('float', 'right')
-          .css('padding', '10px'));
+    makeLogInOutButton(context.renderContext.req)
+      .css('float', 'right')
+      .css('padding', '10px'));
   context.content = content.html();
 };
 
@@ -65,13 +69,13 @@ exports.eejsBlock_userlist = (hookName, context) => {
   // https://github.com/cheeriojs/cheerio/issues/1031
   const content = $('<div>').html(context.content);
   content.find('#myuser').append(
-      makeLogInOutButton(context.renderContext.req).css('margin-left', '10px'));
+    makeLogInOutButton(context.renderContext.req).css('margin-left', '10px'));
   context.content = content.html();
 };
 
 // Note: The expressCreateServer hook is executed after plugins have been loaded, including after
 // installing a plugin from the admin page.
-exports.expressCreateServer = (hookName, {app}) => {
+exports.expressCreateServer = (hookName, { app }) => {
   logger.debug(hookName);
   // Make sure this plugin's authenticate function is called before any other plugin's authenticate
   // function, otherwise users will not be able to visit pads as the guest user.
@@ -91,8 +95,8 @@ exports.expressCreateServer = (hookName, {app}) => {
   app.get(endpoint('login'), (req, res, next) => {
     (async () => {
       logger.debug(req.url);
-      const {user: {username} = {}} = req.session;
-      const {cookies: {token} = {}} = req;
+      const { user: { username } = {} } = req.session;
+      const { cookies: { token } = {} } = req;
       if (username === user.username && token) {
         // Clear the display name so that logged-in users don't show up as "Read-Only Guest".
         // TODO: author ID might come from session ID, not token.
@@ -119,23 +123,23 @@ exports.expressCreateServer = (hookName, {app}) => {
 exports.handleMessage = async (hookName, ctx) => {
   // ctx.client was renamed to ctx.socket in newer versions of Etherpad. Fall back to ctx.client in
   // case this plugin is installed on an older version of Etherpad.
-  const {message, socket = ctx.client} = ctx;
+  const { message, socket = ctx.client } = ctx;
   logger.debug(hookName);
   if (user.displayname == null) return;
-  const {user: {username} = {}} = socket.client.request.session;
+  const { user: { username } = {} } = socket.client.request.session;
   if (username !== user.username) return;
-  const {type, data: {type: dType} = {}} = message || {};
+  const { type, data: { type: dType } = {} } = message || {};
   if (type === 'CLIENT_READY') {
     // TODO: author ID might come from session ID, not token.
     const authorId = await authorManager.getAuthor4Token(message.token);
     await authorManager.setAuthorName(authorId, user.displayname);
   } else if (type === 'COLLABROOM' && dType === 'USERINFO_UPDATE') {
-    const {userInfo = {}} = message.data;
+    const { userInfo = {} } = message.data;
     userInfo.name = user.displayname;
   }
 };
 
-exports.loadSettings = async (hookName, {settings}) => {
+exports.loadSettings = async (hookName, { settings }) => {
   logger.debug(hookName);
   if (settings[pluginName] == null) settings[pluginName] = {};
   const s = settings[pluginName];
@@ -153,7 +157,7 @@ exports.loadSettings = async (hookName, {settings}) => {
   user.is_admin = false;
 };
 
-exports.preAuthorize = (hookName, {req}, cb) => {
+exports.preAuthorize = (hookName, { req }, cb) => {
   // Don't bother logging the user in as guest if they're simply visiting the 'login' endpoint.
   if (req.path === endpoint('login')) return cb([true]);
   return cb([]);
